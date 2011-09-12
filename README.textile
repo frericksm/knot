@@ -33,7 +33,7 @@ h1. Example
 </pre>
 <pre>
 <code title="knot.test.module2.clj">
-ns knot.test.module1 "Module2" {:knot-module true})
+(ns knot.test.module1 "Module2" {:knot-module true})
 
 (def ^{:extension-point-ref "knot.test.module2.ep2" } extension2 "This is contribution e2 from module 2")
 </code>
