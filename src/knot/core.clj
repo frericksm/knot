@@ -48,7 +48,7 @@ Returns a sequence of the symbol names of the declared namespaces."
 	    {}
 	    ext-point-ids)))
 
-(def- *registry* (build-registry (knot-module-namespaces)))
+(def *registry* (build-registry (knot-module-namespaces)))
 
 (defn configuration-elements-for
   "Returns all extensions contributed to the extension-point-id"
