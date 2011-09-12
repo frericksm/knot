@@ -48,11 +48,7 @@ ns knot.test.module1 "Module2" {:knot-module true})
 </code>
 </pre>
 
-<<<<<<< HEAD
 h1. Todo
-=======
-h4. Todo
->>>>>>> a9d43a783e455a956bde90bcaef966cb52d52980
 
 * DSL for specifying extension-point
 
