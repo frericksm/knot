@@ -1,58 +1,160 @@
 (ns knot.core
   "An extension registry."
-  (:require [clojure.contrib.find-namespaces :as fn])
-)
+  (:require [clojure.spec :as s]
+            [clojure.java.io :as io]
+            [clojure.java.classpath :as cjc]
+            [clojure.tools.namespace.find :as ctnf]
+            [clojure.tools.logging :as log])
+  (:import (java.io File FileReader BufferedReader PushbackReader
+                    InputStreamReader)
+           (java.util.jar JarFile JarEntry)))
 
-(defn knot-module-namespaces
-  "Searches CLASSPATH (both directories and JAR files) for Clojure source
-files containing (ns ...) declarations with meta-data :knot-module set to true.
-Returns a sequence of the symbol names of the declared namespaces."
-  []
-  (->> (fn/find-ns-decls-on-classpath)
-       (filter #(some (fn [m] (get m :knot-module))
-		      (filter map? %)))
-       (map second)))
+(defonce ^:private registry-ref (atom {}))
 
-(defn- ns-intern-with-meta-key
-  "Returns the meta-data of vars defined in namespace ns only if the meta-data contains the key meta-key"
-  [ns meta-key]
-  (->> (ns-interns ns)
-       (vals)
-       (map meta)
-       (filter #(contains? % meta-key))
-       )
-  )
+(defn knot-file?
+  "Returns true if the java.io.File represents a knot file which is a file containing
+a map serialized as an edn data structure."
+  [^java.io.File file]
+  (and (.isFile file)
+       (= "knot.edn" (.getName file))))
 
-(defn extension-points
-  "Returns the meta-data of vars defined in namespace ns only if the meta-data contains the key :extension-point-id"
-  [ns]
-  (ns-intern-with-meta-key ns :extension-point-id))
+(defn- jar-files
+  "Given a sequence of File objects, filters it for JAR files, returns
+  a sequence of java.util.jar.JarFile objects."
+  [files]
+  (map #(JarFile. ^File %) (filter cjc/jar-file? files)))
+ 
+(defn knot-files-in-jar
+  "Returns a sequence of filenames ending in .clj or .cljc found in the JAR file."
+  [^JarFile jar-file]
+  (filter #(.endsWith ^String % ".knt")
+          (cjc/filenames-in-jar jar-file)))
 
-(defn extensions
-  "Returns the meta-data of vars defined in namespace ns only if the meta-data contains the key :extension-point-ref"
-  [ns]
-  (ns-intern-with-meta-key ns :extension-point-ref))
+(defn read-knots-from-file
+  "Attempts to read the data in edn format from the file, and returns the
+  unevaluated form.  Returns nil if read fails, or if the first form
+  is not a ns declaration."
+  [file]
+  (with-open [rdr (java.io.PushbackReader. (io/reader file))]
+    {:knot-file (str file)
+     :knot (clojure.edn/read rdr)}))
+
+(s/def ::file #(io/file %))
+(s/def ::knot-file ::file)
+(s/def ::knot coll?)
+
+(s/fdef read-knots-from-file
+        :args ::file 
+        :ret (s/keys :req [::knot-file ::knot]))
+
+(defn find-knots-in-dir
+  "Searches recursively under dir for Clojure source files (.clj, .cljc).
+  Returns a sequence of File objects, in breadth-first sort order."
+  [^File dir]
+  ;; Use sort by absolute path to get breadth-first search.
+  (as-> (file-seq dir) x
+    (filter knot-file? x)
+    (sort-by #(.getAbsolutePath ^File %) x)
+    (map read-knots-from-file x)))
+
+(defn read-knots-from-jarfile-entry
+  "Attempts to read a (ns ...) declaration from the named entry in the
+  JAR file, and returns the unevaluated form.  Returns nil if the read
+  fails, or if the first form is not a ns declaration."
+  [^JarFile jarfile ^String entry-name]
+  (let [f (.getEntry jarfile entry-name)]
+    (with-open [rdr (PushbackReader.
+                     (io/reader
+                      (.getInputStream jarfile (.getEntry jarfile entry-name))))]
+      {:knot-file (str f)
+       :knot (clojure.edn/read rdr)})))
+
+(defn find-knots-in-dir
+  "Searches recursively under dir for Clojure source files (.clj, .cljc).
+  Returns a sequence of File objects, in breadth-first sort order."
+  [^File dir]
+  ;; Use sort by absolute path to get breadth-first search.
+  (as-> (file-seq dir) x
+    (filter knot-file? x)
+    (sort-by #(.getAbsolutePath ^File %) x)
+    (map read-knots-from-file x)))
+
+(defn read-knots-from-jarfile-entry
+  "Attempts to read a (ns ...) declaration from the named entry in the
+  JAR file, and returns the unevaluated form.  Returns nil if the read
+  fails, or if the first form is not a ns declaration."
+  [^JarFile jarfile ^String entry-name]
+  (let [f (.getEntry jarfile entry-name)]
+    (with-open [rdr (PushbackReader.
+                     (io/reader
+                      (.getInputStream jarfile (.getEntry jarfile entry-name))))]
+      ({:knot-file (str f)
+        :knot (clojure.edn/read rdr)}))))
+
+(defn find-knots-in-jarfile
+  "Searches the JAR file for Clojure source files containing (ns ...)
+  declarations; returns the unevaluated ns declarations."
+  [^JarFile jarfile]
+  (filter identity
+          (map #(read-knots-from-jarfile-entry jarfile %)
+               (knot-files-in-jar jarfile))))
+
+(defn find-all-knots
+  "Searches a sequence of java.io.File objects (both directories and
+  JAR files) for files ending with .knt. 
+Returns a sequence of all found maps. Use with clojure.java.classpath to search Clojure's classpath."
+  [files]
+  (concat
+   (mapcat find-knots-in-dir (filter #(.isDirectory ^File %) files))
+   (mapcat find-knots-in-jarfile (jar-files files))))
+
+(defn valid-contribution? [knot-file s form]
+  (try
+    (if (s/valid? s form)
+      true
+      (do (log/error (format "Contribution '%s' to %s from file %s is not valid: %s" form s knot-file (s/explain-data s form)))
+          false))
+    (catch Exception e (do (log/error e) false))))
+
+(defn require-namespaces [all-key-ns]
+  (doseq [n all-key-ns]
+    (try
+      (require n)
+      (catch Exception e (log/error e)))))
 
 (defn build-registry
-  "Builds the registry for the namespaces in seq knot-modules. The registry is map. It maps the extension-point-id to a seq of the meta-data of the extensions to that extension-point-id. Calls require for the namespaces in knot-modules in order to have access to the vars. Returns the registry."
-  [knot-modules]
-  (doseq [ns knot-modules]
-    (require ns))
-  (let [ext-point-ids     (->> knot-modules
-			       (map extension-points)
-			       (flatten)
-			       (map :extension-point-id))
-	extensions        (flatten (map extensions knot-modules))
-	filter-extensions (fn [extension ext-point-id] (= ext-point-id (get extension :extension-point-ref)))]
-    (reduce (fn [a ext-point-id] (assoc a ext-point-id (filter #(filter-extensions % ext-point-id) extensions)))	      
-	    {}
-	    ext-point-ids)))
+  "Searches CLASSPATH (both directories and JAR files) for files named knot.edn.
+A knot file is an edn file containing solely a single map which keys are namespace qualified keywords. These keys are pointing to corresponding clojure specs. 
+The value mapped to a key 'k' is a seq 's' of values. Each value in 's' must be valid due to the spec of 'k'. Invalid values are ignored.
+Returns a single map with all maps merged with conj."
+  []
+  (let [knot-maps (find-all-knots (cjc/classpath))
+        all-key-ns (as-> (map :knot knot-maps) x (map keys x) (apply concat x) (map namespace x) (map symbol x) (set x))]
+    (require-namespaces all-key-ns)
+    (as-> knot-maps x 
+      (map (fn [{:keys [knot-file knot] :as m}]
+             (assoc m :knot (as-> knot y
+                              (map (fn [[k v-seq]]
+                                     (vector k (filter (fn [v] (valid-contribution? knot-file k v)) v-seq))) y)
+                              (into {} y)))) x)
+      (reduce (fn [a1 {:keys [file knot]}]
+                (reduce (fn [a2 [k v]]
+                          (if (contains? a2 k)
+                            (update-in a2 [k] concat v)
+                            (assoc-in  a2 [k] v))) a1 knot)) {} x))))
 
-(def *registry* (build-registry (knot-module-namespaces)))
 
-(defn configuration-elements-for
-  "Returns all extensions contributed to the extension-point-id"
-  [extension-point-id]
-  (->> (get *registry* extension-point-id)
-       (map #(ns-resolve (get % :ns) (get % :name)))
-       (map deref)))
+(defn contributions
+  "Returns all contributions to 'extension-point-id'"
+  [registry extension-point-id]
+  (get registry extension-point-id))
+
+(defn resolve-symbol
+  [namespaced-symbol]
+  (let [namespace  (namespace namespaced-symbol)
+        name       (name namespaced-symbol)]
+    (if (and (not (nil? namespace))
+             (not (contains? (loaded-libs) (symbol namespace))))
+      (require (symbol namespace)))
+    (if-let [v (ns-resolve (symbol namespace) (symbol name))]
+      (deref v))))

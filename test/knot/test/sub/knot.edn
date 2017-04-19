@@ -1,0 +1,4 @@
+{:knot.test.module1/ep1 ["Hi there ep1 from knot/test/sub/knot.edn" 2 knot.test.module1/test-fn]
+ :knot.test.module1/ep2  [ist]
+ :knot.test.module3/ep2  [ist]}
+

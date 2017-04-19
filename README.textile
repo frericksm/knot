@@ -1,57 +1,63 @@
 h1. Knot
 
-Knot is a simple clojure-based extension registry. Knot offers a way to 
+Knot is a simple extension registry for clojure. Knot offers a way to 
 
-* define extension-points, 
-* contribute extensions to the extension-points 
-* and grab all contributions to an extension-point from the entire classpath. 
+* define extension points
+* contribute to the extension points 
+* and grab all contributions to an extension point from the entire classpath. 
 
-All this happens by meta-tagging your clojure files. 
+h2. Define extension point
 
-Extension-point and extension defining clojure files do not require the knot library.
-Only clojure code that want to harvest the contributions requires the knot library.
+An extension point is a spec defined by clojure.spec/def in a clojure file anywhere in the classpath.
 
-h1. Status 
+h2. Contribute to extension point
 
-This is work in progress. 
+To contribute to an extension point you have to create a file named 'knot.edn'. There can be many knot.edn files scattered in the classpath. 
+
+The content of that file has to be a map. Keys are namespaced keywords refering to an extension point (a.k.a  spec). 
+
+The value mapped to a key 'k' has to be a sequence 's' of objects. Each object in 's' has to conform the spec 'k'.
+
+h2. Use contributions
+
+Build the extension registry with knot.core/build-registry and
+get all contributions to an extension point by calling knot.core/contributions.
 
 h1. Example
 
 <pre>
 <code title="knot.test.module1.clj">
 ;; Tag the namspace with the meta-key :knot-module
-(ns knot.test.module1 "Module1" {:knot-module true})
+(ns knot.test.module1
+   (:require [clojure.spec :as s])
 
-;; Tag the extension-point with the meta-key :extension-point-id
-(def ^{:extension-point-id "knot.test.module1.ep1"} extension-point1  "")
+;; Extension point to collect 'menu-items' from the entire classpath
+(s/def ::menu-item string?)
 
-(def ^{:extension-point-id "knot.test.module1.ep2"} extension-point2  "")
-
-;; Tag the extension with the meta-key :extension-point-ref
-(def ^{:extension-point-ref "knot.test.module1.ep1" } extension1 "This is contribution e1 from module 1")
+;; Extension point to collect 'menu-item-listeners' from the entire classpath
+(s/def ::menu-item-listener  symbol?)
 </code>
 </pre>
 <pre>
-<code title="knot.test.module2.clj">
-(ns knot.test.module1 "Module2" {:knot-module true})
+<code title="knot.edn">
+{;; Contribute two menu-items
+ :knot.test.module1/menu-item ["New" "Open"]  
 
-(def ^{:extension-point-ref "knot.test.module2.ep2" } extension2 "This is contribution e2 from module 2")
+ ;; Contribute two menu-item-listeners
+:knot.test.module1/menu-item-listener [app.listeners/listener1 app.listeners/listener2]   
+}
 </code>
 </pre>
 <pre>
 <code title="knot.test.core.clj">
 ...
 (:use [knot.core])
-
+;; (def f (knot.core/build-registry))
 ;; grab the contributions for an extension-point
-(configuration-elements-for "knot.test.module1.ep1")
+(def all-menut-items (contributions r :knot.test.module1/menut-item))
+(def all-menut-item-listeners (contributions r :knot.test.module1/menut-item-listener))
 </code>
 </pre>
-
-h1. Todo
-
-* DSL for specifying extension-point
-
 
 h1. License
 
