@@ -4,7 +4,7 @@ Knot is a simple extension registry for clojure. Knot offers a way to
 
 * define extension points
 * contribute to the extension points 
-* and grab all contributions to an extension point from the entire classpath. 
+* and collect all contributions to an extension point from the entire classpath. 
 
 h2. Define extension point
 
@@ -50,11 +50,14 @@ h1. Example
 </pre>
 <pre>
 <code title="knot.test.core.clj">
-...
-(:use [knot.core])
-;; (def f (knot.core/build-registry))
-;; grab the contributions for an extension-point
-(def all-menut-items (contributions r :knot.test.module1/menut-item))
+(ns my.app
+  (:require [knot.core]))
+
+;; Create registry
+(def f (knot.core/build-registry))
+
+;; Collect the contributions for an extension-point
+(def all-menut-items          (contributions r :knot.test.module1/menut-item))
 (def all-menut-item-listeners (contributions r :knot.test.module1/menut-item-listener))
 </code>
 </pre>
